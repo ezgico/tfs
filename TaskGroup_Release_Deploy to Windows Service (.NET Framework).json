@@ -1,0 +1,197 @@
+{
+    "tasks": [
+        {
+            "environment": {},
+            "displayName": "Check for Pipeline Tags",
+            "alwaysRun": false,
+            "continueOnError": false,
+            "condition": "succeeded()",
+            "enabled": true,
+            "timeoutInMinutes": 0,
+            "inputs": {
+                "targetType": "inline",
+                "filePath": "",
+                "arguments": "",
+                "script": "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n\nfunction Invoke-ADRequest {\n  param(\n    [String]\n    $Endpoint,\n    [String]\n    $Method,\n    [String]\n    $ApiVersion = \"5.0\",\n    $Body,\n    $Params = \"\"\n  )\n\n  $uri = \"https://next-tfs/HeadOffice/$($Endpoint)?api-version=$($ApiVersion)$($Params)\"\n\n  # It is obviously usually a very bad idea to store credentials in a script, but this allows this script to be portable. This PAT token has read-only access to just build and release\n  # pipeline objects.\n  # PS if you've come here because this script is causing you issues, this token would expire 18/11/2021.\n\n  $AzureDevOpsPAT = \"nj7enxgfifn7hhhcbl7cexqwgfcp4yewpj7mwytdz3wyculjpu4q\"\n  $AzureDevOpsAuthenicationHeader = @{Authorization = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(\":$($AzureDevOpsPAT)\")) }\n\n  $invRestMethParams = @{\n    Uri         = $uri\n    Method      = $Method\n    ContentType = 'application/json'\n    Body        = $Body\n    Headers     = $AzureDevOpsAuthenicationHeader\n  }\n  $Result = Invoke-RestMethod @invRestMethParams\n\n  return $result\n}\n\n\n$deploymentInputs = (Invoke-ADRequest -Endpoint \"$($ENV:BUILD_PROJECTNAME)/_apis/release/definitions/$($ENV:RELEASE_DEFINITIONID)\" -Method \"GET\").environments.deployPhases.deploymentInput\n\nforeach($input in $deploymentInputs) {\n  if($input.tags.length -eq 0) {\n    Write-Host \"##vso[task.logissue type=error]There are tags missing on this release pipeline, to avoid deploying to all servers in the pool, this release will be cancelled.\"\n    exit 1\n  }\n}",
+                "errorActionPreference": "stop",
+                "failOnStderr": "false",
+                "ignoreLASTEXITCODE": "false",
+                "pwsh": "false",
+                "workingDirectory": ""
+            },
+            "task": {
+                "id": "e213ff0f-5d5c-4791-802d-52ea3e7be1f1",
+                "versionSpec": "2.*",
+                "definitionType": "task"
+            }
+        },
+        {
+            "environment": {},
+            "displayName": "Find Project",
+            "alwaysRun": false,
+            "continueOnError": false,
+            "condition": "succeeded()",
+            "enabled": true,
+            "timeoutInMinutes": 0,
+            "inputs": {
+                "targetType": "inline",
+                "filePath": "",
+                "arguments": "",
+                "script": "# Get the path to the service to process\n$ServiceProjectPath = (Get-ChildItem -Recurse -Directory $SYSTEM_DEFAULTWORKINGDIRECTORY \"$($env:ServiceProjectName)\").FullName\n\n# Find the non-transformed App.config\n$AppConfigPath = (Get-ChildItem \"$ServiceProjectPath\\App.config\").FullName\n\n# Find the correct App Config based on the Environment (E.g. STG1, WorldPay.STG1)\n$AppConfigTransformPath = (Get-ChildItem \"$ServiceProjectPath\\App.$($env:Environment).config\").FullName\n\n# Find the exe.config to replace after transform\n$ExeConfigPath = (Get-ChildItem -Recurse \"$ServiceProjectPath\\*.exe.config\").FullName\n\n# Save results as pipeline variables\nWrite-Host \"##vso[task.setvariable variable=ServiceProjectPath]$ServiceProjectPath\"\nWrite-Host \"##vso[task.setvariable variable=AppConfigPath]$AppConfigPath\"\nWrite-Host \"##vso[task.setvariable variable=AppConfigTransformPath]$AppConfigTransformPath\"\nWrite-Host \"##vso[task.setvariable variable=ExeConfigPath]$ExeConfigPath\"",
+                "errorActionPreference": "Continue",
+                "failOnStderr": "false",
+                "ignoreLASTEXITCODE": "false",
+                "pwsh": "false",
+                "workingDirectory": ""
+            },
+            "task": {
+                "id": "e213ff0f-5d5c-4791-802d-52ea3e7be1f1",
+                "versionSpec": "2.*",
+                "definitionType": "task"
+            }
+        },
+        {
+            "environment": {},
+            "name": "Apply transforms $(AppConfigTransformPath) => $(AppConfigPath) => $(ExeConfigPath)",
+            "alwaysRun": false,
+            "continueOnError": false,
+            "condition": "succeeded()",
+            "enabled": true,
+            "timeoutInMinutes": 0,
+            "inputs": {
+                "workingFolder": "$(ServiceProjectPath)",
+                "transforms": "$(AppConfigTransformPath) => $(AppConfigPath) => $(ExeConfigPath)"
+            },
+            "task": {
+                "id": "98012758-c053-475d-9d6a-fd0773c39e09",
+                "versionSpec": "3.*",
+                "definitionType": "task"
+            }
+        },
+        {
+            "environment": {},
+            "displayName": "Deploy Windows Service",
+            "alwaysRun": false,
+            "continueOnError": false,
+            "condition": "succeeded()",
+            "enabled": true,
+            "timeoutInMinutes": 0,
+            "inputs": {
+                "DeploymentType": "DeploymentGroup",
+                "Machines": "",
+                "AdminLogin": "",
+                "Password": "",
+                "NewPsSessionOptionArguments": "",
+                "UseSSL": "false",
+                "ServiceName": "$(ServiceName)",
+                "ArtifactPath": "$(ServiceProjectPath)\\bin\\Release",
+                "TimeOut": "30",
+                "StopProcess": "true",
+                "CleanInstall": "true",
+                "StartService": "true",
+                "InstallService": "true",
+                "InstallationPath": "$(InstallationPath)\\$(ServiceProjectName).exe",
+                "RunAsUsername": "",
+                "RunAsPassword": "",
+                "InstallTopShelfService": "false",
+                "InstanceName": "",
+                "InstallArguments": ""
+            },
+            "task": {
+                "id": "7dad075d-a817-45ac-baab-4c1376d2885e",
+                "versionSpec": "4.*",
+                "definitionType": "task"
+            }
+        }
+    ],
+    "runsOn": [
+        "Agent",
+        "DeploymentGroup"
+    ],
+    "revision": 1,
+    "createdBy": {
+        "displayName": "Ewen, Ben",
+        "id": "33d513c5-b47f-494c-b9b6-5beaf25f5b95",
+        "uniqueName": "NEXT-PLC\\BEWEN"
+    },
+    "createdOn": "2020-11-23T16:20:06.140Z",
+    "modifiedBy": {
+        "displayName": "Ewen, Ben",
+        "id": "33d513c5-b47f-494c-b9b6-5beaf25f5b95",
+        "uniqueName": "NEXT-PLC\\BEWEN"
+    },
+    "modifiedOn": "2020-11-23T16:20:06.140Z",
+    "id": "d221b552-9920-42c7-8d91-f79d953da4aa",
+    "name": "Deploy to Windows Service (.NET Framework)",
+    "version": {
+        "major": 1,
+        "minor": 0,
+        "patch": 0,
+        "isTest": false
+    },
+    "iconUrl": "/_static/tfs/Dev17.M153.3/_content/icon-meta-task.png",
+    "friendlyName": "Deploy to Windows Service (.NET Framework)",
+    "description": "Will install or update a Windows Service.\n\nParameters that should be set to use are:\n\nEnvironment = The name of the config transform i.e. if the config is called App.STG1.config, then set it to STG1, if it is App.WorldPay.STG1.config then set it to WorldPay.STG1\n\nInstallationPath = The directory where the service binaries should be installed\n\nServiceName = The name to use for the service when installing\n\nServiceProjectName = The name of the service's project as shown in Visual Studio. e.g. Next.Payments.MqConsumerService",
+    "category": "Deploy",
+    "definitionType": "metaTask",
+    "author": "Ewen, Ben",
+    "demands": [],
+    "groups": [],
+    "inputs": [
+        {
+            "aliases": [],
+            "options": {},
+            "properties": {},
+            "name": "Environment",
+            "label": "Environment",
+            "defaultValue": "$(Environment)",
+            "required": true,
+            "type": "string",
+            "helpMarkDown": "The name of the config transform i.e. if the config is called App.STG1.config, then set it to STG1, if it is App.WorldPay.STG1.config then set it to WorldPay.STG1",
+            "groupName": ""
+        },
+        {
+            "aliases": [],
+            "options": {},
+            "properties": {},
+            "name": "InstallationPath",
+            "label": "InstallationPath",
+            "defaultValue": "$(InstallationPath)",
+            "required": true,
+            "type": "string",
+            "helpMarkDown": "The path that the service should be installed under, e.g. C:\\Program Files\\Next\\ApplePayMqConsumer",
+            "groupName": ""
+        },
+        {
+            "aliases": [],
+            "options": {},
+            "properties": {},
+            "name": "ServiceName",
+            "label": "ServiceName",
+            "defaultValue": "$(ServiceName)",
+            "required": true,
+            "type": "string",
+            "helpMarkDown": "The exact name of the windows service installed on the deployment group target.",
+            "groupName": ""
+        },
+        {
+            "aliases": [],
+            "options": {},
+            "properties": {},
+            "name": "ServiceProjectName",
+            "label": "ServiceProjectName",
+            "defaultValue": "$(ServiceProjectName)",
+            "required": true,
+            "type": "string",
+            "helpMarkDown": "The name of the service's project as shown in Visual Studio. e.g. Next.Payments.MqConsumerService",
+            "groupName": ""
+        }
+    ],
+    "satisfies": [],
+    "sourceDefinitions": [],
+    "dataSourceBindings": [],
+    "instanceNameFormat": "Task group: Deploy to Windows Service (.NET Framework) $(Environment)",
+    "preJobExecution": {},
+    "execution": {},
+    "postJobExecution": {}
+}
